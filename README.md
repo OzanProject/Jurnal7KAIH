@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/landing-page-preview.png" alt="Jurnal 7KAIH Dashboard" width="100%">
+  <img src="public/landing-page-preview.png" alt="Jurnal 7KAIH Landing" width="100%">
 </p>
 
 # Jurnal 7KAIH (7 Kebiasaan Anak Indonesia Hebat)

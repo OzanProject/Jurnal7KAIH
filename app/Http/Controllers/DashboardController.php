@@ -44,6 +44,8 @@ class DashboardController extends Controller
         $schoolId = Auth::user()->school_id;
         $activeYear = \App\Models\AcademicYear::where('is_active', true)->first();
         
+        $leaderboard = $this->getLeaderboard($schoolId);
+        
         // 1. Summary Data
         $schoolsCount = School::count();
         $usersCount = User::count();
@@ -108,7 +110,7 @@ class DashboardController extends Controller
         return view('backend.admin.dashboard', compact(
             'classesCount', 'teachersCount', 'studentsCount', 'journalsToday',
             'recentJournals', 'habitStats', 'dates', 'counts', 'activeYear',
-            'schoolsCount', 'usersCount', 'recentLogs'
+            'schoolsCount', 'usersCount', 'recentLogs', 'leaderboard'
         ));
     }
 
@@ -117,6 +119,11 @@ class DashboardController extends Controller
         $teacher = Auth::user();
         $classRoom = ClassRoom::where('wali_kelas_id', $teacher->id)->first();
         $activeYear = \App\Models\AcademicYear::where('is_active', true)->first();
+        
+        $leaderboard = collect();
+        if ($classRoom) {
+            $leaderboard = $this->getLeaderboard(null, $classRoom->id);
+        }
         
         $stats = [
             'total_students' => 0,
@@ -146,7 +153,7 @@ class DashboardController extends Controller
                                 ->get();
         }
 
-        return view('backend.guru.dashboard', compact('classRoom', 'stats', 'recentJournals', 'activeYear'));
+        return view('backend.guru.dashboard', compact('classRoom', 'stats', 'recentJournals', 'activeYear', 'leaderboard'));
     }
 
     public function siswa()
@@ -159,6 +166,7 @@ class DashboardController extends Controller
         $todayJournal = \App\Models\Journal::where('student_id', $student->id)->whereDate('tanggal', now())->first();
         $isFilledToday = $todayJournal ? true : false;
         $recentJournals = \App\Models\Journal::where('student_id', $student->id)->latest()->take(3)->get();
+        $leaderboard = $this->getLeaderboard($student->user->school_id);
 
         // Habit Stats for Chart
         $habitLabels = [];
@@ -190,12 +198,73 @@ class DashboardController extends Controller
             }
         }
 
-        return view('backend.siswa.dashboard', compact('totalJournals', 'isFilledToday', 'recentJournals', 'activeYear', 'habitLabels', 'habitPercentages'));
+        return view('backend.siswa.dashboard', compact('totalJournals', 'isFilledToday', 'recentJournals', 'activeYear', 'habitLabels', 'habitPercentages', 'leaderboard'));
     }
 
     public function orangTua()
     {
         $activeYear = \App\Models\AcademicYear::where('is_active', true)->first();
         return view('backend.orang_tua.dashboard', compact('activeYear'));
+    }
+
+    protected function getLeaderboard($schoolId = null, $classId = null, $limit = 5)
+    {
+        $query = Student::with('classRoom')
+            ->select('students.*')
+            ->join('journals', 'journals.student_id', '=', 'students.id')
+            ->join('journal_details', 'journal_details.journal_id', '=', 'journals.id')
+            ->where('journal_details.nilai', 1);
+
+        if ($schoolId) {
+            $query->whereHas('user', function($q) use ($schoolId) {
+                $q->where('school_id', $schoolId);
+            });
+        }
+        
+        if ($classId) {
+            $query->where('students.class_id', $classId);
+        }
+
+        $activeYear = \App\Models\AcademicYear::where('is_active', true)->first();
+        if ($activeYear && $activeYear->start_date && $activeYear->end_date) {
+            $query->whereBetween('journals.tanggal', [$activeYear->start_date, $activeYear->end_date]);
+        } else {
+            $query->whereYear('journals.tanggal', date('Y'));
+        }
+
+        $topStudents = $query->groupBy('students.id')
+            ->selectRaw('SUM(10) as points')
+            ->orderByDesc('points')
+            ->take($limit)
+            ->get();
+
+        $currentDate = now()->startOfDay();
+
+        foreach ($topStudents as $student) {
+            $journalDates = \App\Models\Journal::where('student_id', $student->id)
+                ->orderBy('tanggal', 'desc')
+                ->pluck('tanggal')
+                ->map(fn($date) => \Carbon\Carbon::parse($date)->startOfDay())
+                ->unique();
+
+            $streak = 0;
+            if ($journalDates->isNotEmpty()) {
+                $firstDate = $journalDates->first();
+                if ($firstDate->diffInDays($currentDate) <= 1) {
+                    $expectedDate = $firstDate->copy();
+                    foreach ($journalDates as $date) {
+                        if ($date->equalTo($expectedDate)) {
+                            $streak++;
+                            $expectedDate->subDay();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            $student->streak = $streak;
+        }
+
+        return $topStudents;
     }
 }

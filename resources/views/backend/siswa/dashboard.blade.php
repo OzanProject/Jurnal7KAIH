@@ -74,6 +74,14 @@
     </div>
     <!-- [ Habit Chart ] end -->
 
+    <!-- [ Leaderboard ] start -->
+    <div class="row">
+        <div class="col-12">
+            @include('backend.components.leaderboard')
+        </div>
+    </div>
+    <!-- [ Leaderboard ] end -->
+
     <!-- [ Recent Journal ] start -->
     <div class="row">
         <div class="col-lg-12">

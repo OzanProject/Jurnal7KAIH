@@ -140,6 +140,14 @@
     </div>
     <!-- [ Charts ] end -->
 
+    <!-- [ Leaderboard ] start -->
+    <div class="row">
+        <div class="col-12">
+            @include('backend.components.leaderboard')
+        </div>
+    </div>
+    <!-- [ Leaderboard ] end -->
+
     <!-- [ Recent Activity ] start -->
     <div class="row">
         <!-- Aktivitas Jurnal -->

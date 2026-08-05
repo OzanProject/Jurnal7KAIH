@@ -105,6 +105,11 @@
                 </div>
             </div>
 
+            <!-- Leaderboard -->
+            <div class="col-lg-12">
+                @include('backend.components.leaderboard')
+            </div>
+
             <!-- Recent Activity -->
             <div class="col-lg-12">
                 <div class="card stretch stretch-full">

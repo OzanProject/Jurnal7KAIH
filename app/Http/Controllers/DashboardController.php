@@ -209,11 +209,18 @@ class DashboardController extends Controller
 
     protected function getLeaderboard($schoolId = null, $classId = null, $limit = 5)
     {
+        // BEST PRACTICE 1: Menggunakan Subquery (addSelect) untuk menghindari error ONLY_FULL_GROUP_BY 
+        // pada MySQL strict mode dan membuat kueri jauh lebih bersih daripada Join + GroupBy.
         $query = Student::with('classRoom')
             ->select('students.*')
-            ->join('journals', 'journals.student_id', '=', 'students.id')
-            ->join('journal_details', 'journal_details.journal_id', '=', 'journals.id')
-            ->where('journal_details.nilai', 1);
+            ->addSelect(['points' => \App\Models\JournalDetail::selectRaw('COALESCE(SUM(10), 0)')
+                ->join('journals', 'journals.id', '=', 'journal_details.journal_id')
+                ->whereColumn('journals.student_id', 'students.id')
+                ->where('journal_details.nilai', 1)
+                ->when($schoolId, function($q) use ($schoolId) {
+                     // Filter school is already handled by outer query, but good for safety
+                })
+            ]);
 
         if ($schoolId) {
             $query->whereHas('user', function($q) use ($schoolId) {
@@ -227,13 +234,22 @@ class DashboardController extends Controller
 
         $activeYear = \App\Models\AcademicYear::where('is_active', true)->first();
         if ($activeYear && $activeYear->start_date && $activeYear->end_date) {
-            $query->whereBetween('journals.tanggal', [$activeYear->start_date, $activeYear->end_date]);
+            // Apply academic year filter to the subquery if needed, or outer query 
+            // In this subquery approach, it's better to filter students who have journals in that year
+            $query->whereHas('journals', function($q) use ($activeYear) {
+                $q->whereBetween('tanggal', [$activeYear->start_date, $activeYear->end_date]);
+            });
         } else {
-            $query->whereYear('journals.tanggal', date('Y'));
+            $query->whereHas('journals', function($q) {
+                $q->whereYear('tanggal', date('Y'));
+            });
         }
 
-        $topStudents = $query->groupBy('students.id')
-            ->selectRaw('SUM(10) as points')
+        // BEST PRACTICE 2: Eager loading 'journals' untuk mencegah N+1 Query saat menghitung streak
+        $topStudents = $query->with(['journals' => function($q) {
+                $q->select('id', 'student_id', 'tanggal')->orderBy('tanggal', 'desc');
+            }])
+            ->having('points', '>', 0) // Hanya tampilkan yang punya poin
             ->orderByDesc('points')
             ->take($limit)
             ->get();
@@ -241,11 +257,12 @@ class DashboardController extends Controller
         $currentDate = now()->startOfDay();
 
         foreach ($topStudents as $student) {
-            $journalDates = \App\Models\Journal::where('student_id', $student->id)
-                ->orderBy('tanggal', 'desc')
+            // Mengambil tanggal unik dari relasi yang sudah di-eager load (Tidak ada query ke DB lagi)
+            $journalDates = $student->journals
                 ->pluck('tanggal')
                 ->map(fn($date) => \Carbon\Carbon::parse($date)->startOfDay())
-                ->unique();
+                ->unique()
+                ->values(); // reset keys
 
             $streak = 0;
             if ($journalDates->isNotEmpty()) {

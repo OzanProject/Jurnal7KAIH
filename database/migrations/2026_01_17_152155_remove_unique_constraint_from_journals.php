@@ -12,8 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('journals', function (Blueprint $table) {
-            // Laravel usually names it as table_column_unique
+            $table->dropForeign(['student_id']);
             $table->dropUnique(['student_id', 'tanggal']);
+            $table->foreign('student_id')->references('id')->on('students')->onDelete('cascade');
         });
     }
 
@@ -23,7 +24,9 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('journals', function (Blueprint $table) {
+            $table->dropForeign(['student_id']);
             $table->unique(['student_id', 'tanggal']);
+            $table->foreign('student_id')->references('id')->on('students')->onDelete('cascade');
         });
     }
 };

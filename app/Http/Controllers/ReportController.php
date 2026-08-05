@@ -172,10 +172,27 @@ class ReportController extends Controller
         }
 
         if ($selectedClassId) {
+            // BEST PRACTICE: Eager Loading 'journals' dan 'details' untuk menghindari ratusan N+1 Query.
             $students = Student::where('class_id', $selectedClassId)
                 ->whereHas('user', function($q) use ($schoolId) {
                     $q->where('school_id', $schoolId);
                 })
+                ->with(['journals' => function($query) use ($filterType, $selectedMonth, $selectedSemester, $selectedYear) {
+                    $query->whereYear('tanggal', $selectedYear);
+                    if ($filterType == 'semester') {
+                        if ($selectedSemester == 1) {
+                             $query->whereMonth('tanggal', '>=', 7)->whereMonth('tanggal', '<=', 12);
+                        } else {
+                             $query->whereMonth('tanggal', '>=', 1)->whereMonth('tanggal', '<=', 6);
+                        }
+                    } else {
+                        $query->whereMonth('tanggal', $selectedMonth);
+                    }
+                    // Hanya tarik detail yang bernilai "Ya" (1) untuk menghemat memori
+                    $query->with(['details' => function($q) {
+                        $q->where('nilai', 1)->select('id', 'journal_id', 'kebiasaan', 'nilai');
+                    }]);
+                }])
                 ->get();
             
             foreach ($students as $student) {
@@ -188,23 +205,13 @@ class ReportController extends Controller
                 
                 $genderSummary[$g]['count']++;
 
-                // Get journals for this student in period
-                $journalQuery = \App\Models\Journal::where('student_id', $student->id)
-                                    ->whereYear('tanggal', $selectedYear);
-
-                if ($filterType == 'semester') {
-                    if ($selectedSemester == 1) {
-                         $journalQuery->whereMonth('tanggal', '>=', 7)->whereMonth('tanggal', '<=', 12);
-                    } else {
-                         $journalQuery->whereMonth('tanggal', '>=', 1)->whereMonth('tanggal', '<=', 6);
-                    }
-                } else {
-                    $journalQuery->whereMonth('tanggal', $selectedMonth);
-                }
-                
-                $journalIds = $journalQuery->pluck('id');
-                $totalJournals = $journalIds->count();
+                // Ambil jurnal langsung dari relasi yang sudah di-load di memori
+                $journals = $student->journals;
+                $totalJournals = $journals->count();
                 $studentYesChecks = 0;
+
+                // Kumpulkan semua detail jurnal untuk pencarian cepat (Collection Filter)
+                $allYesDetails = $journals->flatMap->details;
 
                 foreach ($habits as $habit) {
                     // Update Total Counts
@@ -213,11 +220,8 @@ class ReportController extends Controller
 
                     $percentage = 0;
                     if ($totalJournals > 0) {
-                        // Count 'Yes'
-                        $yesCount = \App\Models\JournalDetail::whereIn('journal_id', $journalIds)
-                                        ->where('kebiasaan', $habit->id)
-                                        ->where('nilai', 1)
-                                        ->count();
+                        // Menghitung jumlah 'Ya' lewat Collection (tanpa query DB lagi)
+                        $yesCount = $allYesDetails->where('kebiasaan', $habit->id)->count();
                         
                         $studentYesChecks += $yesCount;
                         $percentage = ($yesCount / $totalJournals) * 100;
@@ -288,8 +292,11 @@ class ReportController extends Controller
         $thresholdSudah = \App\Models\Setting::get('habit_threshold_sudah', 80);
         $thresholdCukup = \App\Models\Setting::get('habit_threshold_cukup', 50);
 
-        // Get journals
-        $journalQuery = \App\Models\Journal::where('student_id', $student->id);
+        // Get journals with Eager Loading (Fix N+1)
+        $journalQuery = \App\Models\Journal::where('student_id', $student->id)
+                            ->with(['details' => function($q) {
+                                $q->where('nilai', 1)->select('id', 'journal_id', 'kebiasaan');
+                            }]);
         
         if ($activeYear && $activeYear->start_date && $activeYear->end_date) {
             $journalQuery->whereBetween('tanggal', [$activeYear->start_date, $activeYear->end_date]);
@@ -297,8 +304,9 @@ class ReportController extends Controller
              $journalQuery->whereYear('tanggal', date('Y'));
         }
         
-        $journalIds = $journalQuery->pluck('id');
-        $totalJournals = $journalIds->count();
+        $journals = $journalQuery->get();
+        $totalJournals = $journals->count();
+        $allYesDetails = $journals->flatMap->details;
 
         foreach ($habits as $habit) {
             $percentage = 0;
@@ -306,10 +314,8 @@ class ReportController extends Controller
             $description = 'Perlu ditingkatkan lagi dalam ' . strtolower($habit->name);
 
             if ($totalJournals > 0) {
-                $yesCount = \App\Models\JournalDetail::whereIn('journal_id', $journalIds)
-                                ->where('kebiasaan', $habit->id)
-                                ->where('nilai', 1)
-                                ->count();
+                // Count 'Yes' dari Memory Collection (tanpa query DB lagi)
+                $yesCount = $allYesDetails->where('kebiasaan', $habit->id)->count();
                 $percentage = ($yesCount / $totalJournals) * 100;
             }
 
